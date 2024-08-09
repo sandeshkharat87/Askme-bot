@@ -6,3 +6,4 @@ Knowledge Bot for Documents. Add documents at runtime. The model will then retur
 streamlit run main.py
 `
 
+![image](https://github.com/user-attachments/assets/68a5826a-7cca-45a1-97a1-6bec59c28494)
