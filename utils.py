@@ -1,83 +1,83 @@
-from langchain_community.document_loaders import DirectoryLoader
+from langchain_groq import ChatGroq
+from langchain.tools import tool
+from langchain.document_loaders import DirectoryLoader
+from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.schema.output_parser import StrOutputParser
-from langchain_core.runnables  import RunnablePassthrough
-from langchain_community.vectorstores import FAISS
-import shutil as sh
-from langchain.llms import HuggingFaceHub
+from duckduckgo_search import DDGS
+from langchain.agents import initialize_agent, AgentType,create_react_agent,AgentExecutor
+from langchain import hub
+from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
-import os
-import sys
-
-print("--Start--")
-
-## PATHS
-store_path = "store"
-database_path = os.path.join(store_path,"DATABASE")
-docs_path = os.path.join(store_path,"DOCS")
-processed_docs_path = os.path.join(store_path,"processed")
-os.makedirs(database_path,exist_ok=True)
-os.makedirs(docs_path,exist_ok=True)
-os.makedirs(processed_docs_path,exist_ok=True)
+from langchain.prompts import PromptTemplate
+from langchain.chains import RetrievalQA
+from langchain.vectorstores import FAISS
+# from langchain.runnables import 
 
 
+embed_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-l6-v2")
+qa_temp = """
+You are a helpful bot which answers question using context provided.
+Finding answers from the context. If You couldnot find answer just say i dont know
+Dont try to makeup an answer.
+
+Context:{context}
+Question:{question}
+Answer:
+"""
+qa_prompt = PromptTemplate.from_template(qa_temp)
+
+# QA = RetrievalQA.from_chain_type(llm=llm,   prompt=qa_temp)
 
 
-# create docs
-def _create_docs():
-    pdf_loader = DirectoryLoader(docs_path,glob = "**/*.pdf",loader_cls=PyPDFLoader)
-    txt_loader = DirectoryLoader(docs_path,glob = "**/*.txt")
-    docx_loader = DirectoryLoader(docs_path,glob = "**/*.docx")
+
+
+##load envs
+from dotenv import load_dotenv
+load_dotenv()
+
+# EMBED_MODEL = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+
+llm = ChatGroq(model_name="llama-3.1-70b-versatile")
+DB = FAISS.load_local(folder_path="data/database/estatements-vectors",embeddings=embed_model,allow_dangerous_deserialization=True)
+QA = RetrievalQA.from_chain_type(
+    llm, retriever=DB.as_retriever(), chain_type_kwargs={"prompt": qa_prompt}
+)
+
+prompt = hub.pull("hwchase17/react")
+
+
+@tool
+def web_search_tool(state):
+    """Use this tool for finding inforamtion on the web/internet for current scenarios"""
+    findings = DDGS().text(state,max_results=3)
+    findings = " ".join([i["body"] for i in findings])
+    return findings
+
+@tool
+def wether_tool(state):
+    """Useful for finding wether of the current day"""    
+    return "28 Degree Celcious"
+
+
+@tool
+def local_search_tool(state):
+    """Useful for finding informaiton about bank statements, money """
+    answer = QA(state)
     
-    all_loader = [pdf_loader,txt_loader]
-
-    docs_collection = []
-    for myloader in all_loader:
-        docs_collection.extend(myloader.load())
-
-    ### split documents
-    splitter = RecursiveCharacterTextSplitter(chunk_size = 512, chunk_overlap=150, length_function=len)
-
-    DOCS = splitter.split_documents(docs_collection)
-
-
-    return DOCS
-
-# add docs to database
-def add_docs_to_database(DB,EMBED_MODEL):
-    temp_docs = _create_docs()
-    if len(temp_docs)>0:
-        temp_db = FAISS.from_documents(temp_docs,EMBED_MODEL)
-
-        ## if database is empty create new else merge to old
-        if  os.path.exists(os.path.join(database_path,"index.pkl")) and os.path.exists(os.path.join(database_path,"index.faiss")):
-            print("--merging to crt database")
-            current_db = DB
-            current_db.merge_from(temp_db)
-            current_db.save_local(database_path)
-            ## Move files rom DOCS -> Processed Docs
-            remove_docs()
-            print("Removed docs")
-            print("--Saved new docs--")
-        else:
-            print("--Fresh--")
-            temp_db.save_local(database_path)
-            ## Move files rom DOCS -> Processed Docs
-            remove_docs()
-    else:
-        print("Nothing to ADD, DOCS is empty", len(temp_docs))
+    return answer["result"]
         
 
-# Move docs from DOCS - Processed
-def remove_docs():
-    for i in os.listdir(docs_path):
-        sh.move(os.path.join(docs_path,i), 
-                os.path.join(processed_docs_path,os.path.basename(i)))
+my_tools = [web_search_tool,wether_tool,local_search_tool]
 
 
 
 
+agent = initialize_agent(llm=llm, tools = my_tools,verbose=True,handle_parsing_error=True)
+# react_agent = create_react_agent(llm=llm, tools=my_tools,prompt=prompt)
+# AE = AgentExecutor.from_agent_and_tools(llm=llm ,agent=react_agent,tools=my_tools,
+                                        # verbose=True,handle_parsing_error=True)
 
-
+def bot(question):
+    # result = AE.invoke(dict(input=question))
+    result = agent.invoke(dict(input=question))
+    return result["output"]

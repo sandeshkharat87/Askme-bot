@@ -1,2 +1,7 @@
 store
 work.ipynb
+data
+.env
+flagged
+*__*
+main.ipynb
